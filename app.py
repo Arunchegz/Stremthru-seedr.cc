@@ -1,12 +1,3 @@
-@app.route("/")
-def home():
-    return jsonify({
-        "name": "Seedr Stremio Addon",
-        "status": "running",
-        "authorize": "/authorize",
-        "poll": "/poll",
-        "token": "/token"
-    })
 from flask import Flask, jsonify
 import requests
 import os
@@ -20,6 +11,17 @@ SEEDR_TOKEN_URL = "https://www.seedr.cc/oauth/token"
 
 device_data = {}
 access_token = None
+
+
+@app.route("/")
+def home():
+    return jsonify({
+        "name": "Seedr Stremio Addon",
+        "status": "running",
+        "authorize": "/authorize",
+        "poll": "/poll",
+        "token": "/token"
+    })
 
 
 @app.route("/authorize")
@@ -36,6 +38,7 @@ def authorize():
         resp.raise_for_status()
         data = resp.json()
 
+        device_data.clear()
         device_data.update(data)
 
         return jsonify({
