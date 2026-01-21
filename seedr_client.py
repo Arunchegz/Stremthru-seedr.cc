@@ -1,26 +1,27 @@
 import requests
 
 class SeedrClient:
-    BASE_URL = "https://www.seedr.cc/rest"
+    BASE = "https://www.seedr.cc/rest"
 
     def __init__(self, token):
         if not token:
-            raise ValueError("SEEDR_TOKEN environment variable not set")
+            raise ValueError("SEEDR_TOKEN is not set")
         self.token = token
-        self.headers = {
-            "Authorization": f"Bearer {self.token}"
-        }
 
-    def _get(self, path, params=None):
-        url = f"{self.BASE_URL}{path}"
-        r = requests.get(url, headers=self.headers, params=params)
+    def _get(self, path):
+        url = f"{self.BASE}{path}"
+        r = requests.get(url, params={"access_token": self.token})
+        print("Seedr request:", r.url)
+        print("Seedr status:", r.status_code)
+        print("Seedr body:", r.text)
         r.raise_for_status()
         return r.json()
 
     def list_root(self):
-        # Lists files & folders in root
         return self._get("/folder")
 
+    def list_folder(self, folder_id):
+        return self._get(f"/folder/{folder_id}")
+
     def get_stream_url(self, file_id):
-        data = self._get("/file", params={"file_id": file_id})
-        return data["url"]
+        return f"https://www.seedr.cc/rest/file/{file_id}?access_token={self.token}"
