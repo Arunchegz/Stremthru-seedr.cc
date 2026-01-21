@@ -1,3 +1,12 @@
+@app.route("/")
+def home():
+    return jsonify({
+        "name": "Seedr Stremio Addon",
+        "status": "running",
+        "authorize": "/authorize",
+        "poll": "/poll",
+        "token": "/token"
+    })
 from flask import Flask, jsonify
 import requests
 import os
