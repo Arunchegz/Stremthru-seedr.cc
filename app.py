@@ -12,6 +12,23 @@ SEEDR_TOKEN_URL = "https://www.seedr.cc/oauth/token"
 device_data = {}
 access_token = None
 
+@app.route("/manifest.json")
+def manifest():
+    return jsonify({
+        "id": "org.seedr.stremio",
+        "version": "1.0.0",
+        "name": "Seedr Cloud",
+        "description": "Stream your Seedr.cc cloud files in Stremio",
+        "resources": ["catalog", "stream"],
+        "types": ["movie"],
+        "catalogs": [
+            {
+                "type": "movie",
+                "id": "seedr",
+                "name": "Seedr Files"
+            }
+        ]
+    })
 
 @app.route("/")
 def home():
