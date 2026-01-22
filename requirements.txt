@@ -1,0 +1,3 @@
+fastapi
+seedrcc
+uvicorn
