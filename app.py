@@ -1,22 +1,28 @@
 from flask import Flask, jsonify, request
+from dotenv import load_dotenv
 import requests
 import os
 import secrets
 import time
+
+load_dotenv()
 
 app = Flask(__name__)
 
 # -------------------------
 # CONFIG
 # -------------------------
-SEEDR_COOKIE = os.getenv("SEEDR_COOKIE")
+SEEDR_COOKIE = os.getenv("SEEDR_COOKIE", "").strip()
 
 SEEDR_FOLDER_API = "https://www.seedr.cc/rest/folder"
 SEEDR_FILE_API = "https://www.seedr.cc/rest/file"
 
-# Your fake OAuth storage
+# Fake OAuth storage (like MediaFusion)
 device_codes = {}  # code → {created, authorized, token}
 
+# -------------------------
+# Seedr headers
+# -------------------------
 def seedr_headers():
     return {
         "User-Agent": "Mozilla/5.0",
@@ -34,15 +40,35 @@ def home():
         "status": "running",
         "steps": {
             "1": "GET /get-device-code",
-            "2": "Enter code in /authorize",
+            "2": "POST /authorize with device_code",
             "3": "Receive token",
-            "4": "Use token in Authorization: Bearer <token>",
+            "4": "Use token as Authorization: Bearer <token>",
             "5": "Use /manifest.json in Stremio"
         }
     })
 
 # -------------------------
-# DEVICE CODE (like MediaFusion)
+# TEST SEEDR COOKIE
+# -------------------------
+@app.route("/test-seedr")
+def test_seedr():
+    if not SEEDR_COOKIE:
+        return jsonify({"error": "SEEDR_COOKIE not set in environment"}), 500
+
+    try:
+        r = requests.get(SEEDR_FOLDER_API, headers=seedr_headers(), timeout=15)
+
+        # Don’t assume JSON; show raw response for debugging
+        return jsonify({
+            "status_code": r.status_code,
+            "content_type": r.headers.get("Content-Type"),
+            "response_preview": r.text[:500]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# -------------------------
+# DEVICE CODE (Your own system)
 # -------------------------
 @app.route("/get-device-code")
 def get_device_code():
@@ -58,14 +84,14 @@ def get_device_code():
     })
 
 # -------------------------
-# AUTHORIZE (fake OAuth)
+# AUTHORIZE (Your own token)
 # -------------------------
 @app.route("/authorize", methods=["POST"])
 def authorize():
-    data = request.json
+    data = request.json or {}
     code = data.get("device_code")
 
-    if code not in device_codes:
+    if not code or code not in device_codes:
         return jsonify({"error": "Invalid device code"}), 400
 
     token = secrets.token_hex(32)
@@ -81,8 +107,8 @@ def authorize():
 # TOKEN CHECK
 # -------------------------
 def check_token(req):
-    auth = req.headers.get("Authorization")
-    if not auth:
+    auth = req.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
         return False
     token = auth.replace("Bearer ", "")
     return any(v["token"] == token for v in device_codes.values())
@@ -116,8 +142,16 @@ def catalog():
     if not check_token(request):
         return jsonify({"error": "Unauthorized"}), 401
 
-    r = requests.get(SEEDR_FOLDER_API, headers=seedr_headers())
-    data = r.json()
+    r = requests.get(SEEDR_FOLDER_API, headers=seedr_headers(), timeout=15)
+
+    try:
+        data = r.json()
+    except:
+        return jsonify({
+            "error": "Seedr returned non-JSON response",
+            "status_code": r.status_code,
+            "preview": r.text[:300]
+        }), 500
 
     metas = []
     for f in data.get("files", []):
@@ -141,29 +175,31 @@ def stream(id):
     r = requests.get(
         SEEDR_FILE_API,
         params={"file_id": id},
-        headers=seedr_headers()
+        headers=seedr_headers(),
+        timeout=15
     )
-    data = r.json()
+
+    try:
+        data = r.json()
+    except:
+        return jsonify({
+            "error": "Seedr returned non-JSON response",
+            "status_code": r.status_code,
+            "preview": r.text[:300]
+        }), 500
 
     return jsonify({
         "streams": [
             {
                 "title": "Seedr Cloud",
-                "url": data["url"]
+                "url": data.get("url")
             }
         ]
     })
 
 # -------------------------
-# TEST SEEDR LOGIN
-# -------------------------
-@app.route("/test-seedr")
-def test_seedr():
-    r = requests.get(SEEDR_FOLDER_API, headers=seedr_headers())
-    return jsonify(r.json())
-
-# -------------------------
 # RUN
 # -------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
