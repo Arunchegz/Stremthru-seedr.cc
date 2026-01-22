@@ -1,20 +1,50 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, Response
 import requests
 import os
+import time
 
 app = Flask(__name__)
 
-SEEDR_CLIENT_ID = os.getenv("SEEDR_CLIENT_ID", "stremio-addon")
+# =======================
+# CONFIG
+# =======================
 
+SEEDR_CLIENT_ID = os.getenv("SEEDR_CLIENT_ID", "stremio-addon")
 SEEDR_DEVICE_URL = "https://www.seedr.cc/oauth/device"
 SEEDR_TOKEN_URL = "https://www.seedr.cc/oauth/token"
+SEEDR_API_BASE = "https://www.seedr.cc/rest"
 
 device_data = {}
 access_token = None
 
+
+# =======================
+# BASIC TEST
+# =======================
+
+@app.route("/ping")
+def ping():
+    return "OK"
+
+
+@app.route("/")
+def home():
+    return jsonify({
+        "name": "Seedr Stremio Addon",
+        "status": "running",
+        "authorize": "/authorize",
+        "poll": "/poll",
+        "token": "/token"
+    })
+
+
+# =======================
+# STREMIO MANIFEST
+# =======================
+
 @app.route("/manifest.json")
 def manifest():
-    return jsonify({
+    data = {
         "id": "org.seedr.stremio",
         "version": "1.0.0",
         "name": "Seedr Cloud",
@@ -28,50 +58,43 @@ def manifest():
                 "name": "Seedr Files"
             }
         ]
-    })
+    }
 
-@app.route("/")
-def home():
-    return jsonify({
-        "name": "Seedr Stremio Addon",
-        "status": "running",
-        "authorize": "/authorize",
-        "poll": "/poll",
-        "token": "/token"
-    })
+    return Response(
+        response=jsonify(data).get_data(as_text=True),
+        mimetype="application/json"
+    )
 
+
+# =======================
+# SEEDR DEVICE OAUTH
+# =======================
 
 @app.route("/authorize")
 def authorize():
+    global device_data
+
     try:
-        resp = requests.post(SEEDR_DEVICE_URL, data={
+        r = requests.post(SEEDR_DEVICE_URL, data={
             "client_id": SEEDR_CLIENT_ID,
             "scope": "user"
         }, timeout=10)
 
-        print("Seedr status:", resp.status_code)
-        print("Seedr response:", resp.text)
-
-        resp.raise_for_status()
-        data = resp.json()
-
-        device_data.clear()
-        device_data.update(data)
+        r.raise_for_status()
+        data = r.json()
+        device_data = data
 
         return jsonify({
             "message": "Go to https://www.seedr.cc/devices and enter this code",
             "user_code": data["user_code"],
             "device_code": data["device_code"],
-            "verification_uri": data.get("verification_uri", "https://www.seedr.cc/devices"),
+            "verification_uri": "https://www.seedr.cc/devices",
             "expires_in": data["expires_in"],
             "interval": data["interval"]
         })
 
     except Exception as e:
-        return jsonify({
-            "error": "Authorize failed",
-            "details": str(e)
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/poll")
@@ -82,16 +105,13 @@ def poll():
         return jsonify({"error": "Visit /authorize first"}), 400
 
     try:
-        resp = requests.post(SEEDR_TOKEN_URL, data={
+        r = requests.post(SEEDR_TOKEN_URL, data={
             "client_id": SEEDR_CLIENT_ID,
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
             "device_code": device_data["device_code"]
         }, timeout=10)
 
-        print("Poll status:", resp.status_code)
-        print("Poll response:", resp.text)
-
-        data = resp.json()
+        data = r.json()
 
         if "access_token" in data:
             access_token = data["access_token"]
@@ -103,10 +123,7 @@ def poll():
         return jsonify(data)
 
     except Exception as e:
-        return jsonify({
-            "error": "Polling failed",
-            "details": str(e)
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/token")
@@ -115,6 +132,73 @@ def token():
         return jsonify({"authorized": False})
     return jsonify({"authorized": True, "access_token": access_token})
 
+
+# =======================
+# SEEDR API HELPERS
+# =======================
+
+def seedr_headers():
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+def seedr_list_root():
+    r = requests.get(f"{SEEDR_API_BASE}/folder", headers=seedr_headers())
+    r.raise_for_status()
+    return r.json()
+
+
+def seedr_get_file(id):
+    r = requests.get(f"{SEEDR_API_BASE}/file/{id}", headers=seedr_headers())
+    r.raise_for_status()
+    return r.json()
+
+
+# =======================
+# STREMIO CATALOG
+# =======================
+
+@app.route("/catalog/movie/seedr.json")
+def catalog():
+    if not access_token:
+        return jsonify({"metas": []})
+
+    data = seedr_list_root()
+    metas = []
+
+    for f in data.get("files", []):
+        metas.append({
+            "id": str(f["id"]),
+            "type": "movie",
+            "name": f["name"],
+            "poster": "https://seedr.cc/favicon.ico"
+        })
+
+    return jsonify({"metas": metas})
+
+
+# =======================
+# STREMIO STREAM
+# =======================
+
+@app.route("/stream/movie/<id>.json")
+def stream(id):
+    if not access_token:
+        return jsonify({"streams": []})
+
+    file = seedr_get_file(id)
+    return jsonify({
+        "streams": [
+            {
+                "title": "Seedr Cloud",
+                "url": file["url"]
+            }
+        ]
+    })
+
+
+# =======================
+# RUN
+# =======================
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
