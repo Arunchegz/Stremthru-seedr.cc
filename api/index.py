@@ -1,55 +1,58 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from aioseedrcc import Login, Seedr
-import asyncio
+from seedrcc import AsyncSeedr # Using seedrcc for better stability
+import os
 
 app = FastAPI()
 
-# 1. ROOT ROUTE (To test if Vercel is working)
 @app.get("/")
 async def root():
-    return {"status": "Seedr Addon is Online", "usage": "Go to /get-device-code to start"}
+    return {"status": "Online", "message": "Seedr Stremio Addon"}
 
-# 2. DEVICE CODE FLOW
 @app.get("/get-device-code")
 async def get_device_code():
-    async with Login() as seedr_login:
-        code = await seedr_login.get_device_code()
-        return code
+    try:
+        async with AsyncSeedr() as seedr:
+            code = await seedr.get_device_code()
+            return code
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-# 3. STREMIO MANIFEST
 @app.get("/{token}/manifest.json")
 async def manifest(token: str):
     return {
-        "id": "com.seedr.stremio",
+        "id": "community.seedr.addon",
         "version": "1.0.0",
-        "name": "Seedr Streamer",
+        "name": "Seedr Cloud",
         "resources": ["stream"],
         "types": ["movie", "series"],
         "idPrefixes": ["tt"]
     }
 
-# 4. STREAM RESOLVER (Production Logic)
 @app.get("/{token}/stream/{type}/{id}.json")
-async def stream_provider(token: str, type: str, id: str):
-    async with Seedr(token=token) as seedr:
-        # Get all files in Seedr
-        files = await seedr.list_contents()
-        streams = []
-        
-        # We look for files. In production, you'd match IMDb ID names.
-        # This searches for video files in your folders
-        for folder in files.get('folders', []):
-            inner = await seedr.list_contents(folder['id'])
-            for f in inner.get('files', []):
-                if f.get('play_video'):
-                    # Get the direct stream link
-                    link_data = await seedr.get_file(f['id'])
-                    streams.append({
-                        "name": "Seedr",
-                        "title": f['name'],
-                        "url": link_data['url']
-                    })
-        
-        return {"streams": streams}
-        
+async def stream_handler(token: str, type: str, id: str):
+    try:
+        async with AsyncSeedr(token=token) as seedr:
+            contents = await seedr.list_contents()
+            streams = []
+            
+            # Simple recursive search for video files
+            for folder in contents.get('folders', []):
+                files = await seedr.list_contents(folder['id'])
+                for f in files.get('files', []):
+                    if f.get('play_video'):
+                        file_details = await seedr.get_file(f['id'])
+                        streams.append({
+                            "name": "Seedr",
+                            "title": f['name'],
+                            "url": file_details['url']
+                        })
+            return {"streams": streams}
+    except Exception as e:
+        return {"streams": [], "error": str(e)}
+
+# Critical for Vercel deployment
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
