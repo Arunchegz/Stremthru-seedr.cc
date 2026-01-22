@@ -1,66 +1,84 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import requests
 import os
 
 app = Flask(__name__)
 
-# Seedr endpoints
-SEEDR_DEVICE_URL = "https://www.seedr.cc/rest/device/add"
-SEEDR_FOLDER_URL = "https://www.seedr.cc/rest/folder"
-SEEDR_FILE_URL = "https://www.seedr.cc/rest/file"
+# This will store the user's Seedr token after authorization
+SEEDR_TOKEN = None
 
-# Global token storage (simple version)
-access_token = None
+SEEDR_API_BASE = "https://www.seedr.cc/rest"
 
 
-# -----------------------
-# Home
-# -----------------------
+def seedr_request(endpoint, params=None):
+    global SEEDR_TOKEN
+    if not SEEDR_TOKEN:
+        raise Exception("Seedr token not set. Call /authorize first.")
+
+    if params is None:
+        params = {}
+
+    params["access_token"] = SEEDR_TOKEN
+    url = f"{SEEDR_API_BASE}/{endpoint}"
+
+    r = requests.get(url, params=params, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
 @app.route("/")
 def home():
     return jsonify({
         "name": "Seedr Stremio Addon",
         "status": "running",
-        "authorize": "/authorize",
-        "manifest": "/manifest.json",
-        "catalog": "/catalog/movie/seedr.json",
-        "stream": "/stream/movie/<id>.json"
+        "authorize": "/authorize?token=YOUR_SEEDR_TOKEN",
+        "manifest": "/manifest.json"
     })
 
 
-# -----------------------
-# Seedr Device Authorization
-# -----------------------
+# Step 1: User pastes their Seedr token here
+# Example:
+# https://stremthru-seedr-cc.onrender.com/authorize?token=PASTE_TOKEN
 @app.route("/authorize")
 def authorize():
-    """
-    Creates a new Seedr device and returns the device code.
-    User must enter this code at https://www.seedr.cc/devices
-    """
-    global access_token
-    try:
-        r = requests.post(SEEDR_DEVICE_URL, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+    global SEEDR_TOKEN
 
-        # Seedr gives token immediately
-        access_token = data["token"]
+    token = request.args.get("token")
+    if not token:
+        return jsonify({
+            "error": "Missing token",
+            "usage": "/authorize?token=YOUR_SEEDR_TOKEN"
+        }), 400
+
+    # Validate token by calling Seedr API
+    try:
+        r = requests.get(
+            f"{SEEDR_API_BASE}/folder",
+            params={"access_token": token},
+            timeout=15
+        )
+
+        if r.status_code != 200:
+            return jsonify({
+                "error": "Invalid Seedr token",
+                "details": r.text
+            }), 401
+
+        SEEDR_TOKEN = token
 
         return jsonify({
-            "message": "Go to https://www.seedr.cc/devices and enter this code",
-            "user_code": data["code"],
-            "access_token": access_token
+            "status": "authorized",
+            "message": "Seedr token accepted successfully",
+            "next": "/manifest.json"
         })
+
     except Exception as e:
         return jsonify({
-            "error": "Seedr authorize failed",
+            "error": "Authorization failed",
             "details": str(e)
         }), 500
 
 
-# -----------------------
-# Stremio Manifest
-# -----------------------
 @app.route("/manifest.json")
 def manifest():
     return jsonify({
@@ -80,20 +98,10 @@ def manifest():
     })
 
 
-# -----------------------
-# Catalog Endpoint
-# -----------------------
 @app.route("/catalog/movie/seedr.json")
 def catalog():
-    if not access_token:
-        return jsonify({"error": "Not authorized. Visit /authorize first"}), 401
-
     try:
-        r = requests.get(SEEDR_FOLDER_URL, params={
-            "access_token": access_token
-        }, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        data = seedr_request("folder")
 
         metas = []
         for f in data.get("files", []):
@@ -101,7 +109,7 @@ def catalog():
                 "id": str(f["id"]),
                 "type": "movie",
                 "name": f["name"],
-                "poster": "https://seedr.cc/favicon.ico"
+                "poster": "https://www.seedr.cc/favicon.ico"
             })
 
         return jsonify({"metas": metas})
@@ -113,43 +121,32 @@ def catalog():
         }), 500
 
 
-# -----------------------
-# Stream Endpoint
-# -----------------------
-@app.route("/stream/movie/<id>.json")
-def stream(id):
-    if not access_token:
-        return jsonify({"streams": []})
-
+@app.route("/stream/movie/<file_id>.json")
+def stream(file_id):
     try:
-        r = requests.get(SEEDR_FILE_URL, params={
-            "access_token": access_token,
-            "id": id
-        }, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        # Get file download link
+        data = seedr_request(f"file/{file_id}")
 
-        stream_url = data["url"]
+        url = data.get("url")
+        if not url:
+            return jsonify({"streams": []})
 
         return jsonify({
             "streams": [
                 {
                     "title": "Seedr Cloud",
-                    "url": stream_url
+                    "url": url
                 }
             ]
         })
 
     except Exception as e:
         return jsonify({
-            "streams": [],
-            "error": str(e)
-        })
+            "error": "Failed to get stream",
+            "details": str(e)
+        }), 500
 
 
-# -----------------------
-# Run
-# -----------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
