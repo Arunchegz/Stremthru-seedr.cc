@@ -9,56 +9,62 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# -------------------------
+# =====================================================
 # CONFIG
-# -------------------------
+# =====================================================
 SEEDR_COOKIE = os.getenv("SEEDR_COOKIE", "").strip()
 
 SEEDR_FOLDER_API = "https://www.seedr.cc/rest/folder"
 SEEDR_FILE_API = "https://www.seedr.cc/rest/file"
 
 # Fake OAuth storage (like MediaFusion)
-device_codes = {}  # code → {created, authorized, token}
+# device_code -> {created, authorized, token}
+device_codes = {}
 
-# -------------------------
-# Seedr headers
-# -------------------------
+# =====================================================
+# HEADERS (Browser-like to avoid Cloudflare)
+# =====================================================
 def seedr_headers():
     return {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/121.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.seedr.cc/",
+        "Origin": "https://www.seedr.cc",
         "Cookie": SEEDR_COOKIE
     }
 
-# -------------------------
+# =====================================================
 # HOME
-# -------------------------
+# =====================================================
 @app.route("/")
 def home():
     return jsonify({
-        "name": "Seedr Stremio Addon",
+        "name": "Seedr Cloud (MediaFusion style auth)",
         "status": "running",
-        "steps": {
+        "flow": {
             "1": "GET /get-device-code",
             "2": "POST /authorize with device_code",
             "3": "Receive token",
-            "4": "Use token as Authorization: Bearer <token>",
+            "4": "Use token in headers: Authorization: Bearer <token>",
             "5": "Use /manifest.json in Stremio"
         }
     })
 
-# -------------------------
+# =====================================================
 # TEST SEEDR COOKIE
-# -------------------------
+# =====================================================
 @app.route("/test-seedr")
 def test_seedr():
     if not SEEDR_COOKIE:
-        return jsonify({"error": "SEEDR_COOKIE not set in environment"}), 500
+        return jsonify({"error": "SEEDR_COOKIE not set"}), 500
 
     try:
         r = requests.get(SEEDR_FOLDER_API, headers=seedr_headers(), timeout=15)
-
-        # Don’t assume JSON; show raw response for debugging
         return jsonify({
             "status_code": r.status_code,
             "content_type": r.headers.get("Content-Type"),
@@ -67,9 +73,9 @@ def test_seedr():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# -------------------------
-# DEVICE CODE (Your own system)
-# -------------------------
+# =====================================================
+# DEVICE CODE (Your own, like MediaFusion)
+# =====================================================
 @app.route("/get-device-code")
 def get_device_code():
     code = secrets.token_hex(4).upper()
@@ -80,12 +86,12 @@ def get_device_code():
     }
     return jsonify({
         "device_code": code,
-        "message": "Use this code in /authorize"
+        "message": "Use this code in POST /authorize"
     })
 
-# -------------------------
-# AUTHORIZE (Your own token)
-# -------------------------
+# =====================================================
+# AUTHORIZE (Exchange device code for token)
+# =====================================================
 @app.route("/authorize", methods=["POST"])
 def authorize():
     data = request.json or {}
@@ -103,9 +109,9 @@ def authorize():
         "token": token
     })
 
-# -------------------------
+# =====================================================
 # TOKEN CHECK
-# -------------------------
+# =====================================================
 def check_token(req):
     auth = req.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -113,16 +119,16 @@ def check_token(req):
     token = auth.replace("Bearer ", "")
     return any(v["token"] == token for v in device_codes.values())
 
-# -------------------------
+# =====================================================
 # STREMIO MANIFEST
-# -------------------------
+# =====================================================
 @app.route("/manifest.json")
 def manifest():
     return jsonify({
         "id": "org.seedr.cloud",
         "version": "1.0.0",
         "name": "Seedr Cloud",
-        "description": "Stream your Seedr.cc files directly",
+        "description": "Stream your Seedr.cc files directly (MediaFusion style auth)",
         "resources": ["catalog", "stream"],
         "types": ["movie"],
         "catalogs": [
@@ -134,9 +140,9 @@ def manifest():
         ]
     })
 
-# -------------------------
+# =====================================================
 # CATALOG
-# -------------------------
+# =====================================================
 @app.route("/catalog/movie/seedr.json")
 def catalog():
     if not check_token(request):
@@ -164,9 +170,9 @@ def catalog():
 
     return jsonify({"metas": metas})
 
-# -------------------------
+# =====================================================
 # STREAM
-# -------------------------
+# =====================================================
 @app.route("/stream/movie/<id>.json")
 def stream(id):
     if not check_token(request):
@@ -197,9 +203,9 @@ def stream(id):
         ]
     })
 
-# -------------------------
+# =====================================================
 # RUN
-# -------------------------
+# =====================================================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
