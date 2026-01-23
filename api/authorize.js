@@ -1,13 +1,18 @@
 import axios from "axios";
 
-// WARNING: In serverless, memory is not persistent.
-// We only use this to temporarily show the device code.
-// The token will be copied manually by the user.
 globalThis.seedrDeviceCode = null;
 
 export default async function handler(req, res) {
   try {
-    const { data } = await axios.get("https://www.seedr.cc/rest/device/add");
+    const { data } = await axios.get(
+      "https://www.seedr.cc/rest/device/add",
+      {
+        headers: {
+          "User-Agent": "Seedr-Stremio-Addon",
+          "Accept": "application/json"
+        }
+      }
+    );
 
     globalThis.seedrDeviceCode = data.device_code;
 
@@ -24,7 +29,7 @@ export default async function handler(req, res) {
       <a href="/api/callback">/api/callback</a>
     `);
   } catch (err) {
-    console.error(err.message);
+    console.error(err.response?.data || err.message);
     res.status(500).send("Failed to create device code");
   }
 }
