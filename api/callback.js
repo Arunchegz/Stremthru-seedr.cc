@@ -8,12 +8,16 @@ export default async function handler(req, res) {
       return res.send("No device code found. Run /api/authorize first.");
     }
 
-    const { data } = await axios.get(
-      `https://www.seedr.cc/rest/device/code?device_code=${deviceCode}`,
+    const { data } = await axios.post(
+      "https://www.seedr.cc/rest/device/code",
+      { device_code: deviceCode },
       {
         headers: {
-          "User-Agent": "Seedr-Stremio-Addon",
-          "Accept": "application/json"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "Origin": "https://www.seedr.cc",
+          "Referer": "https://www.seedr.cc/devices"
         }
       }
     );
@@ -27,8 +31,9 @@ export default async function handler(req, res) {
       <h2>Authorization successful!</h2>
       <p>Your access token:</p>
       <pre>${data.access_token}</pre>
-      <p>Save this in Vercel as <b>SEEDR_TOKEN</b></p>
+      <p>Save this as <b>SEEDR_TOKEN</b> in Vercel Environment Variables</p>
     `);
+
   } catch (err) {
     console.error(err.response?.data || err.message);
     res.status(500).send("Authorization failed");
