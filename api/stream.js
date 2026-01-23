@@ -1,25 +1,25 @@
 import axios from "axios";
 
-export default async function handler(req, res) {
+export default async function stream(req, res) {
   try {
     const token = process.env.SEEDR_TOKEN;
 
     if (!token) {
-      return res.status(500).json({
+      return res.json({
         streams: [],
-        error: "SEEDR_TOKEN not configured. Run /api/authorize first."
+        error: "SEEDR_TOKEN not configured"
       });
     }
 
-    const headers = {
-      "Authorization": `Bearer ${token}`,
-      "User-Agent": "Seedr-Stremio-Addon",
-      "Accept": "application/json"
-    };
-
     const { data } = await axios.get(
       "https://www.seedr.cc/rest/folder",
-      { headers }
+      {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "application/json"
+        }
+      }
     );
 
     const streams = [];
