@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export default async function handler(req, res) {
+export default async function callback(req, res) {
   try {
     const deviceCode = globalThis.seedrDeviceCode;
 
@@ -13,27 +13,24 @@ export default async function handler(req, res) {
       { device_code: deviceCode },
       {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "User-Agent": "Mozilla/5.0",
           "Accept": "application/json",
-          "Content-Type": "application/json",
-          "Origin": "https://www.seedr.cc",
-          "Referer": "https://www.seedr.cc/devices"
+          "Content-Type": "application/json"
         }
       }
     );
 
     if (!data.access_token) {
-      return res.send("Device not approved yet. Please approve and try again.");
+      return res.send("Device not approved yet. Approve and try again.");
     }
 
-    res.setHeader("Content-Type", "text/html");
-    res.end(`
-      <h2>Authorization successful!</h2>
-      <p>Your access token:</p>
+    res.send(`
+      <h2>Authorization Successful</h2>
+      <p>Your Seedr Access Token:</p>
       <pre>${data.access_token}</pre>
-      <p>Save this as <b>SEEDR_TOKEN</b> in Vercel Environment Variables</p>
+      <p>Now save this token as <b>SEEDR_TOKEN</b> in Railway Variables.</p>
+      <p>Then restart your service.</p>
     `);
-
   } catch (err) {
     console.error(err.response?.data || err.message);
     res.status(500).send("Authorization failed");
