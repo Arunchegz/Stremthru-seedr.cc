@@ -1,17 +1,26 @@
-from seedrcc import Seedr, Token
-import os
+from seedrcc import Seedr
+import json
 
-TOKEN_FILE = "seedr_token.json"
+def get_client():
+    with open("seedr_token.json", "r") as f:
+        data = json.load(f)
 
-def save_token(token: Token):
-    with open(TOKEN_FILE, "w") as f:
-        f.write(token.to_json())
+    device_code = data["device_code"]
+    return Seedr.from_device_code(device_code)
 
-def get_client() -> Seedr:
-    if not os.path.exists(TOKEN_FILE):
-        raise RuntimeError("seedr_token.json not found. Token is missing.")
 
-    with open(TOKEN_FILE, "r") as f:
-        token = Token.from_json(f.read())
+def list_files():
+    with get_client() as client:
+        contents = client.list_contents()
 
-    return Seedr(token, on_token_refresh=save_token)
+        print("\nYour Seedr files:\n")
+
+        for file in contents.files:
+            print(f"[FILE] {file.name} | {file.size} bytes | ID: {file.file_id}")
+
+        for folder in contents.folders:
+            print(f"[FOLDER] {folder.name} | ID: {folder.folder_id}")
+
+
+if __name__ == "__main__":
+    list_files()
