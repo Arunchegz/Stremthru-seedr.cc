@@ -81,4 +81,52 @@ def catalog(type: str, id: str):
 # ---------------- META ----------------
 @app.get("/meta/{type}/{id}.json")
 def meta(type: str, id: str):
-    with get_client() a_
+    with get_client() as client:
+        contents = client.list_contents()
+
+        for f in contents.files:
+            if str(f.file_id) == id:
+                return {
+                    "meta": {
+                        "id": id,
+                        "type": "movie",
+                        "name": f.name,
+                        "poster": f.thumb,
+                        "description": f.name
+                    }
+                }
+
+    return {"meta": None}
+
+
+# ---------------- STREAM ----------------
+@app.get("/stream/{type}/{id}.json")
+def stream(type: str, id: str):
+    streams = []
+
+    try:
+        with get_client() as client:   # <-- THIS LINE MUST LOOK EXACTLY LIKE THIS
+            contents = client.list_contents()
+
+            for file in contents.files:
+                if str(file.file_id) == str(id) and file.play_video:
+                    # Correct Seedr API usage
+                    result = client.fetch_file(file.folder_file_id)
+                    url = result.url
+
+                    streams.append({
+                        "name": file.name,
+                        "title": file.name,
+                        "url": url,
+                        "behaviorHints": {
+                            "notWebReady": False
+                        }
+                    })
+
+    except Exception as e:
+        return {
+            "streams": [],
+            "error": str(e)
+        }
+
+    return {"streams": streams}
