@@ -55,9 +55,21 @@ def stream(type: str, id: str):
 
             for file in contents.files:
                 if str(file.file_id) == str(id) and file.play_video:
-                    fetched = client.fetch_file(file.file_id)
+                    fetched = None
 
-                    url = fetched.download_url  # this is the real stream URL
+                    # retry logic (Seedr often fails once)
+                    for attempt in range(2):
+                        try:
+                            fetched = client.fetch_file(file.file_id)
+                            break
+                        except Exception as e:
+                            if attempt == 1:
+                                raise e
+
+                    if not fetched or not hasattr(fetched, "download_url"):
+                        raise Exception("Seedr did not return download_url")
+
+                    url = fetched.download_url
 
                     streams.append({
                         "name": file.name,
@@ -71,7 +83,7 @@ def stream(type: str, id: str):
     except Exception as e:
         return {
             "streams": [],
-            "error": str(e)
+            "error": f"Seedr error: {str(e)}"
         }
 
     return {"streams": streams}
