@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from seedrcc import Seedr
 import os
 import re
+import requests
 
 app = FastAPI()
 
@@ -17,6 +18,19 @@ def get_client():
     return Seedr.from_device_code(os.environ["SEEDR_DEVICE_CODE"])
 
 
+def normalize(text: str):
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def get_movie_title(imdb_id: str):
+    url = f"https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json"
+    data = requests.get(url, timeout=10).json()
+    meta = data.get("meta", {})
+    title = meta.get("name", "")
+    year = str(meta.get("year", ""))
+    return title, year
+
+
 @app.get("/manifest.json")
 def manifest():
     return {
@@ -25,7 +39,7 @@ def manifest():
         "name": "Seedr.cc Personal Addon",
         "description": "Stream your Seedr.cc files directly in Stremio",
         "resources": ["stream"],
-        "types": ["movie", "series", "other"],
+        "types": ["movie"],
         "catalogs": []
     }
 
@@ -46,17 +60,18 @@ def debug_files():
         ]
 
 
-def normalize(text: str):
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9]", "", text)
-    return text
-
-
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
 
+    if type != "movie":
+        return {"streams": []}
+
     try:
+        # 1. Get movie title from IMDb
+        movie_title, movie_year = get_movie_title(id)
+        norm_title = normalize(movie_title)
+
         with get_client() as client:
             contents = client.list_contents()
 
@@ -64,17 +79,21 @@ def stream(type: str, id: str):
                 if not file.play_video:
                     continue
 
-                # Create streaming URL using Seedr API
-                result = client.fetch_file(file.folder_file_id)
+                fname = normalize(file.name)
 
-                streams.append({
-                    "name": "Seedr.cc",
-                    "title": file.name,
-                    "url": result.url,
-                    "behaviorHints": {
-                        "notWebReady": False
-                    }
-                })
+                # 2. Match movie title + optionally year
+                if norm_title in fname and (movie_year in file.name):
+                    # 3. Fetch real streaming URL
+                    result = client.fetch_file(file.folder_file_id)
+
+                    streams.append({
+                        "name": "Seedr.cc",
+                        "title": file.name,
+                        "url": result.url,
+                        "behaviorHints": {
+                            "notWebReady": False
+                        }
+                    })
 
     except Exception as e:
         return {
