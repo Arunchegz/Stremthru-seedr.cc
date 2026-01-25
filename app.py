@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from seedrcc import Seedr
 import os
-import time
 
 app = FastAPI()
 
@@ -34,15 +33,16 @@ def manifest():
     }
 
 
-# Debug endpoint to see what Railway actually sees in your Seedr account
+# Debug endpoint – shows what Seedr sees
 @app.get("/debug/files")
 def debug_files():
     result = []
     with get_client() as client:
         contents = client.list_contents()
         for f in contents.files:
-            result.append({   # <-- IMPORTANT: append, not ap
+            result.append({
                 "file_id": f.file_id,
+                "folder_file_id": f.folder_file_id,
                 "name": f.name,
                 "size": f.size,
                 "play_video": f.play_video
@@ -50,6 +50,7 @@ def debug_files():
     return result
 
 
+# Stremio stream endpoint
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
@@ -59,38 +60,10 @@ def stream(type: str, id: str):
             contents = client.list_contents()
 
             for file in contents.files:
+                # match by file_id and only if playable video
                 if str(file.file_id) == str(id) and file.play_video:
-
-                    fetched = None
-                    last_error = None
-
-                    # Retry up to 3 times because Seedr API can be flaky
-                    for _ in range(3):
-                        try:
-                            fetched = client.fetch_file(file.file_id)
-                            break
-                        except Exception as e:
-                            last_error = e
-                            time.sleep(1)
-
-                    if not fetched:
-                        return {
-                            "streams": [],
-                            "error": f"Seedr fetch_file failed after retries: {last_error}"
-                        }
-
-                    # SeedrCC may return object or dict depending on version
-                    url = None
-                    if hasattr(fetched, "download_url"):
-                        url = fetched.download_url
-                    elif isinstance(fetched, dict):
-                        url = fetched.get("download_url") or fetched.get("url")
-
-                    if not url:
-                        return {
-                            "streams": [],
-                            "error": "Seedr returned no streaming URL"
-                        }
+                    # Direct Seedr streaming URL (most stable)
+                    url = f"https://www.seedr.cc/stream/{file.file_id}"
 
                     streams.append({
                         "name": file.name,
@@ -102,7 +75,7 @@ def stream(type: str, id: str):
                     })
 
     except Exception as e:
-        # Never crash Stremio; always return valid JSON
+        # Never crash Stremio
         return {
             "streams": [],
             "error": str(e)
