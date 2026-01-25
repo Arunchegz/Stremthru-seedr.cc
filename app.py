@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from seedrcc import Seedr
-import json
 import os
 
 app = FastAPI()
 
+# Allow all CORS (needed for Stremio + browsers)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,11 +13,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create Seedr client using device code from Railway environment variable
 def get_client():
-    with open("seedr_token.json", "r") as f:
-        data = json.load(f)
-
-    device_code = data["device_code"]
+    device_code = os.environ["SEEDR_DEVICE_CODE"]
     return Seedr.from_device_code(device_code)
 
 
@@ -38,16 +36,40 @@ def manifest():
 def stream(type: str, id: str):
     streams = []
 
-    with get_client() as client:
-        contents = client.list_contents()
+    try:
+        with get_client() as client:
+            contents = client.list_contents()
 
-        for file in contents.files:
-            if str(file.file_id) == str(id) and file.play_video:
-                url = client.fetch_file(file.file_id)
-                streams.append({
-                    "name": file.name,
-                    "title": file.name,
-                    "url": url
-                })
+            for file in contents.files:
+                # Match the requested file
+                if str(file.file_id) == str(id) and file.play_video:
+                    # SeedrCC keeps the real streaming URL inside raw data
+                    raw = file.get_raw()
+
+                    # Try all possible keys (SeedrCC versions differ)
+                    url = (
+                        raw.get("download_url")
+                        or raw.get("url")
+                        or raw.get("stream_url")
+                    )
+
+                    if not url:
+                        continue
+
+                    streams.append({
+                        "name": file.name,
+                        "title": file.name,
+                        "url": url,
+                        "behaviorHints": {
+                            "notWebReady": False
+                        }
+                    })
+
+    except Exception as e:
+        # Never crash Stremio, always return valid JSON
+        return {
+            "streams": [],
+            "error": str(e)
+        }
 
     return {"streams": streams}
