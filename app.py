@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from seedrcc import Seedr
 import os
+import time
 
 app = FastAPI()
 
@@ -36,42 +37,4 @@ def debug_files():
     with get_client() as client:
         contents = client.list_contents()
         for f in contents.files:
-            result.append({
-                "file_id": f.file_id,
-                "name": f.name,
-                "size": f.size,
-                "play_video": f.play_video
-            })
-    return result
-
-
-@app.get("/stream/{type}/{id}.json")
-def stream(type: str, id: str):
-    streams = []
-
-    try:
-        with get_client() as client:
-            contents = client.list_contents()
-
-            for file in contents.files:
-                if str(file.file_id) == str(id) and file.play_video:
-                    fetched = client.fetch_file(file.file_id)
-
-                    url = fetched.download_url  # this is the real stream URL
-
-                    streams.append({
-                        "name": file.name,
-                        "title": file.name,
-                        "url": url,
-                        "behaviorHints": {
-                            "notWebReady": False
-                        }
-                    })
-
-    except Exception as e:
-        return {
-            "streams": [],
-            "error": str(e)
-        }
-
-    return {"streams": streams}
+            result.ap
