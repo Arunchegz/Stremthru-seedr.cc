@@ -7,7 +7,7 @@ import requests
 
 app = FastAPI()
 
-# Allow Stremio + browser access
+# CORS for Stremio + browser
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,26 +15,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------
+# -------------------------
 # Seedr Client
-# -----------------------
-
+# -------------------------
 def get_client():
     return Seedr.from_device_code(os.environ["SEEDR_DEVICE_CODE"])
 
 
-# -----------------------
+# -------------------------
 # Helpers
-# -----------------------
-
+# -------------------------
 def normalize(text: str):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
 def get_movie_title(imdb_id: str):
-    """
-    Get movie title + year from Stremio Cinemeta using IMDb ID
-    """
     url = f"https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json"
     data = requests.get(url, timeout=10).json()
     meta = data.get("meta", {})
@@ -45,8 +40,7 @@ def get_movie_title(imdb_id: str):
 
 def walk_files(client, folder_id=None):
     """
-    Recursively walk through Seedr root and all subfolders
-    and yield every file found.
+    Recursively walk all files and folders in Seedr.
     """
     contents = client.list_contents(folder_id=folder_id)
 
@@ -57,27 +51,31 @@ def walk_files(client, folder_id=None):
         yield from walk_files(client, folder.id)
 
 
-# -----------------------
+# -------------------------
 # Manifest
-# -----------------------
-
+# -------------------------
 @app.get("/manifest.json")
 def manifest():
     return {
         "id": "org.seedrcc.stremio",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "name": "Seedr.cc Personal Addon",
-        "description": "Stream your Seedr.cc files directly in Stremio",
-        "resources": ["stream"],
+        "description": "Browse and stream your Seedr.cc files directly in Stremio",
+        "resources": ["stream", "catalog", "meta"],
         "types": ["movie"],
-        "catalogs": []
+        "catalogs": [
+            {
+                "type": "movie",
+                "id": "seedr",
+                "name": "My Seedr Library"
+            }
+        ]
     }
 
 
-# -----------------------
-# Debug: See all files Seedr sees (including inside folders)
-# -----------------------
-
+# -------------------------
+# Debug (see everything in Seedr)
+# -------------------------
 @app.get("/debug/files")
 def debug_files():
     with get_client() as client:
@@ -87,16 +85,57 @@ def debug_files():
                 "folder_file_id": f.folder_file_id,
                 "name": f.name,
                 "size": f.size,
-                "play_video": f.play_video
+                "play_video": f.play_video,
             }
             for f in walk_files(client)
         ]
 
 
-# -----------------------
-# Stream endpoint (used by Stremio)
-# -----------------------
+# -------------------------
+# Catalog → Shows in Stremio as "My Seedr Library"
+# -------------------------
+@app.get("/catalog/movie/seedr.json")
+def catalog():
+    metas = []
 
+    with get_client() as client:
+        for file in walk_files(client):
+            if not file.play_video:
+                continue
+
+            metas.append({
+                "id": str(file.folder_file_id),
+                "type": "movie",
+                "name": file.name,
+                "poster": getattr(file, "thumb", None),
+            })
+
+    return {"metas": metas}
+
+
+# -------------------------
+# Meta → When clicking a catalog item
+# -------------------------
+@app.get("/meta/movie/{id}.json")
+def meta(id: str):
+    with get_client() as client:
+        for file in walk_files(client):
+            if str(file.folder_file_id) == id:
+                return {
+                    "meta": {
+                        "id": id,
+                        "type": "movie",
+                        "name": file.name,
+                        "poster": getattr(file, "thumb", None),
+                        "description": "From your Seedr.cc account",
+                    }
+                }
+    return {"meta": None}
+
+
+# -------------------------
+# Stream → When pressing Play
+# -------------------------
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
@@ -105,21 +144,10 @@ def stream(type: str, id: str):
         return {"streams": []}
 
     try:
-        # 1. Get movie title + year from IMDb
-        movie_title, movie_year = get_movie_title(id)
-        norm_title = normalize(movie_title)
-
+        # This ID is folder_file_id from Seedr
         with get_client() as client:
-            # 2. Walk ALL files including inside folders
             for file in walk_files(client):
-                if not file.play_video:
-                    continue
-
-                fname = normalize(file.name)
-
-                # 3. Match by title and year
-                if norm_title in fname and movie_year in file.name:
-                    # 4. Fetch real streaming URL from Seedr
+                if str(file.folder_file_id) == id and file.play_video:
                     result = client.fetch_file(file.folder_file_id)
 
                     streams.append({
@@ -132,7 +160,6 @@ def stream(type: str, id: str):
                     })
 
     except Exception as e:
-        # Never crash Stremio
         return {
             "streams": [],
             "error": str(e)
