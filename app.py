@@ -13,7 +13,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # Create Seedr client using device code from Railway variable
 def get_client():
     device_code = os.environ["SEEDR_DEVICE_CODE"]
@@ -33,7 +32,7 @@ def manifest():
     }
 
 
-# Debug endpoint to see what Railway actually sees in your Seedr account
+# Debug endpoint: list files with IDs
 @app.get("/debug/files")
 def debug_files():
     result = []
@@ -49,6 +48,16 @@ def debug_files():
     return result
 
 
+# Debug endpoint: dump raw Seedr API response for first file
+@app.get("/debug/raw")
+def debug_raw():
+    with get_client() as client:
+        contents = client.list_contents()
+        for f in contents.files:
+            return f.get_raw()
+    return {"error": "No files found"}
+
+
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
@@ -59,17 +68,24 @@ def stream(type: str, id: str):
 
             for file in contents.files:
                 if str(file.file_id) == str(id) and file.play_video:
-                    # Seedr stores the real streaming URL in raw metadata
+                    # Seedr stores the real streaming URL inside raw metadata
                     raw = file.get_raw()
 
+                    # Try common possible keys
                     url = (
                         raw.get("download_url")
                         or raw.get("url")
                         or raw.get("stream_url")
+                        or raw.get("link")
                     )
 
                     if not url:
-                        continue
+                        # If URL is not found, return debug info instead of silent fail
+                        return {
+                            "streams": [],
+                            "error": "No streaming URL found in Seedr response",
+                            "raw_keys": list(raw.keys())
+                        }
 
                     streams.append({
                         "name": file.name,
