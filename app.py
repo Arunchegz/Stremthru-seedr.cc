@@ -1,89 +1,132 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from seedrcc import Seedr
 import os
+import json
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+
+from seedrcc import Seedr, Token
+
+TOKEN_FILE = "seedr_token.json"
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+seedr_client: Seedr | None = None
 
-def get_client():
-    device_code = os.environ["SEEDR_DEVICE_CODE"]
-    return Seedr.from_device_code(device_code)
 
+# ---------------------------
+# Token storage helpers
+# ---------------------------
+
+def save_token(token: Token):
+    with open(TOKEN_FILE, "w") as f:
+        f.write(token.to_json())
+
+
+def load_token() -> Token | None:
+    if os.path.exists(TOKEN_FILE):
+        return Token.from_json(open(TOKEN_FILE).read())
+    return None
+
+
+# ---------------------------
+# Seedr initialization
+# ---------------------------
+
+def init_seedr():
+    global seedr_client
+
+    token = load_token()
+    if token:
+        seedr_client = Seedr(token, on_token_refresh=save_token)
+        return True
+
+    return False
+
+
+# ---------------------------
+# Device auth endpoints
+# ---------------------------
+
+@app.get("/seedr/device-code")
+def get_device_code():
+    """
+    Step 1: Call this to get a user code.
+    """
+    codes = Seedr.get_device_code()
+    return {
+        "device_code": codes.device_code,
+        "user_code": codes.user_code,
+        "verification_url": codes.verification_url,
+        "message": f"Go to {codes.verification_url} and enter code {codes.user_code}"
+    }
+
+
+@app.get("/seedr/authorize/{device_code}")
+def authorize_device(device_code: str):
+    """
+    Step 2: Call this AFTER approving device on seedr.cc/devices
+    """
+    global seedr_client
+
+    client = Seedr.from_device_code(device_code, on_token_refresh=save_token)
+    save_token(client.token)
+    seedr_client = client
+
+    return {"status": "authorized"}
+
+
+# ---------------------------
+# Stremio manifest
+# ---------------------------
 
 @app.get("/manifest.json")
 def manifest():
     return {
-        "id": "org.seedrcc.stremio",
+        "id": "org.seedr.streamer",
         "version": "1.0.0",
-        "name": "Seedr.cc Personal Addon",
-        "description": "Stream your Seedr.cc files directly in Stremio",
-        "resources": ["stream"],
+        "name": "Seedr Streamer",
+        "description": "Stream files directly from Seedr",
         "types": ["movie", "series", "other"],
+        "resources": ["stream"],
         "catalogs": []
     }
 
 
-@app.get("/debug/files")
-def debug_files():
-    result = []
-    with get_client() as client:
-        contents = client.list_contents()
-        for f in contents.files:
-            result.append({
-                "file_id": f.file_id,
-                "name": f.name,
-                "size": f.size,
-                "play_video": f.play_video
-            })
-    return result
-
+# ---------------------------
+# Stream endpoint
+# ---------------------------
 
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
-    streams = []
+    if not seedr_client:
+        raise HTTPException(400, "Seedr not authorized")
 
     try:
-        with get_client() as client:
-            contents = client.list_contents()
-
-            for file in contents.files:
-                if str(file.file_id) == str(id) and file.play_video:
-                    fetched = None
-
-                    # retry logic (Seedr often fails once)
-                    for attempt in range(2):
-                        try:
-                            fetched = client.fetch_file(file.file_id)
-                            break
-                        except Exception as e:
-                            if attempt == 1:
-                                raise e
-
-                    if not fetched or not hasattr(fetched, "download_url"):
-                        raise Exception("Seedr did not return download_url")
-
-                    url = fetched.download_url
-
-                    streams.append({
-                        "name": file.name,
-                        "title": file.name,
-                        "url": url,
-                        "behaviorHints": {
-                            "notWebReady": False
-                        }
-                    })
-
+        folder = seedr_client.list_contents()
     except Exception as e:
-        return {
-            "streams": [],
-            "error": f"Seedr error: {str(e)}"
-        }
+        raise HTTPException(500, f"Seedr API error: {e}")
+
+    streams = []
+
+    for f in folder.files:
+        if f.name.lower().endswith((".mp4", ".mkv", ".avi", ".mov", ".webm")):
+            try:
+                link = seedr_client.fetch_file(f.folder_file_id)
+
+                streams.append({
+                    "name": "Seedr",
+                    "title": f.name,
+                    "url": link.url
+                })
+            except Exception as e:
+                print("Failed to fetch file:", e)
 
     return {"streams": streams}
+
+
+# ---------------------------
+# Startup
+# ---------------------------
+
+@app.on_event("startup")
+def startup_event():
+    init_seedr()
