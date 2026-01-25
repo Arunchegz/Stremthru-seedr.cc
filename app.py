@@ -13,25 +13,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 def get_client():
     device_code = os.environ["SEEDR_DEVICE_CODE"]
     return Seedr.from_device_code(device_code)
 
 
+# ---------------- MANIFEST ----------------
 @app.get("/manifest.json")
 def manifest():
     return {
         "id": "org.seedrcc.stremio",
         "version": "1.0.0",
         "name": "Seedr.cc Personal Addon",
-        "description": "Stream your Seedr.cc files directly in Stremio",
-        "resources": ["stream"],
-        "types": ["movie", "series", "other"],
-        "catalogs": []
+        "description": "Stream and browse your Seedr.cc files directly in Stremio",
+        "resources": ["stream", "catalog", "meta"],
+        "types": ["movie"],
+        "catalogs": [
+            {
+                "type": "movie",
+                "id": "seedr-movies",
+                "name": "My Seedr Movies"
+            }
+        ]
     }
 
 
-# Debug endpoint
+# ---------------- DEBUG ----------------
 @app.get("/debug/files")
 def debug_files():
     result = []
@@ -43,43 +51,34 @@ def debug_files():
                 "folder_file_id": f.folder_file_id,
                 "name": f.name,
                 "size": f.size,
-                "play_video": f.play_video
+                "play_video": f.play_video,
+                "thumb": f.thumb
             })
     return result
 
 
-# Stremio stream endpoint (using fetch_file correctly)
-@app.get("/stream/{type}/{id}.json")
-def stream(type: str, id: str):
-    streams = []
+# ---------------- CATALOG ----------------
+@app.get("/catalog/{type}/{id}.json")
+def catalog(type: str, id: str):
+    metas = []
 
-    try:
-        with get_client() as client:
-            contents = client.list_contents()
+    with get_client() as client:
+        contents = client.list_contents()
 
-            for file in contents.files:
-                # Match Stremio request to Seedr file
-                if str(file.file_id) == str(id) and file.play_video:
+        for f in contents.files:
+            if f.play_video:
+                metas.append({
+                    "id": str(f.file_id),
+                    "type": "movie",
+                    "name": f.name,
+                    "poster": f.thumb,
+                    "description": f.name
+                })
 
-                    # IMPORTANT: use folder_file_id here
-                    result = client.fetch_file(file.folder_file_id)
+    return {"metas": metas}
 
-                    # This is the real streaming / download URL
-                    url = result.url
 
-                    streams.append({
-                        "name": file.name,
-                        "title": file.name,
-                        "url": url,
-                        "behaviorHints": {
-                            "notWebReady": False
-                        }
-                    })
-
-    except Exception as e:
-        return {
-            "streams": [],
-            "error": str(e)
-        }
-
-    return {"streams": streams}
+# ---------------- META ----------------
+@app.get("/meta/{type}/{id}.json")
+def meta(type: str, id: str):
+    with get_client() a_
