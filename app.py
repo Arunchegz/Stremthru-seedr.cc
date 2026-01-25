@@ -5,7 +5,6 @@ import os
 
 app = FastAPI()
 
-# Allow Stremio + browser access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,7 +12,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create Seedr client using device code from Railway variable
 def get_client():
     device_code = os.environ["SEEDR_DEVICE_CODE"]
     return Seedr.from_device_code(device_code)
@@ -32,7 +30,6 @@ def manifest():
     }
 
 
-# Debug endpoint: list files with IDs
 @app.get("/debug/files")
 def debug_files():
     result = []
@@ -48,16 +45,6 @@ def debug_files():
     return result
 
 
-# Debug endpoint: dump raw Seedr API response for first file
-@app.get("/debug/raw")
-def debug_raw():
-    with get_client() as client:
-        contents = client.list_contents()
-        for f in contents.files:
-            return f.get_raw()
-    return {"error": "No files found"}
-
-
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
@@ -68,24 +55,9 @@ def stream(type: str, id: str):
 
             for file in contents.files:
                 if str(file.file_id) == str(id) and file.play_video:
-                    # Seedr stores the real streaming URL inside raw metadata
-                    raw = file.get_raw()
+                    fetched = client.fetch_file(file.file_id)
 
-                    # Try common possible keys
-                    url = (
-                        raw.get("download_url")
-                        or raw.get("url")
-                        or raw.get("stream_url")
-                        or raw.get("link")
-                    )
-
-                    if not url:
-                        # If URL is not found, return debug info instead of silent fail
-                        return {
-                            "streams": [],
-                            "error": "No streaming URL found in Seedr response",
-                            "raw_keys": list(raw.keys())
-                        }
+                    url = fetched.download_url  # this is the real stream URL
 
                     streams.append({
                         "name": file.name,
@@ -97,7 +69,6 @@ def stream(type: str, id: str):
                     })
 
     except Exception as e:
-        # Never crash Stremio; always return valid JSON
         return {
             "streams": [],
             "error": str(e)
