@@ -1,6 +1,7 @@
 from seedrcc import Seedr
 import json
 
+
 def get_client():
     with open("seedr_token.json", "r") as f:
         data = json.load(f)
@@ -16,10 +17,17 @@ def list_files():
         print("\nYour Seedr files:\n")
 
         for file in contents.files:
-            print(f"[FILE] {file.name} | {file.size} bytes | ID: {file.file_id}")
+            print(
+                f"[FILE] {file.name} | {file.size} bytes | "
+                f"file_id: {file.file_id} | folder_file_id: {file.folder_file_id}"
+            )
+
+        print("\nYour Seedr folders:\n")
 
         for folder in contents.folders:
-            print(f"[FOLDER] {folder.name} | ID: {folder.folder_id}")
+            print(
+                f"[FOLDER] {folder.name} | ID: {folder.id}"
+            )
 
 
 if __name__ == "__main__":
