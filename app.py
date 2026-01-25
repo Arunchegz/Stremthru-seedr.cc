@@ -13,7 +13,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 def get_client():
     device_code = os.environ["SEEDR_DEVICE_CODE"]
     return Seedr.from_device_code(device_code)
@@ -32,7 +31,7 @@ def manifest():
     }
 
 
-# Debug endpoint: confirm file_id and folder_file_id
+# Debug endpoint
 @app.get("/debug/files")
 def debug_files():
     result = []
@@ -49,7 +48,7 @@ def debug_files():
     return result
 
 
-# Stremio stream endpoint (Option 2: direct Seedr streaming)
+# Stremio stream endpoint (using fetch_file correctly)
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
@@ -59,9 +58,14 @@ def stream(type: str, id: str):
             contents = client.list_contents()
 
             for file in contents.files:
+                # Match Stremio request to Seedr file
                 if str(file.file_id) == str(id) and file.play_video:
-                    # Correct and stable Seedr streaming URL
-                    url = f"https://www.seedr.cc/api/stream/{file.folder_file_id}"
+
+                    # IMPORTANT: use folder_file_id here
+                    result = client.fetch_file(file.folder_file_id)
+
+                    # This is the real streaming / download URL
+                    url = result.url
 
                     streams.append({
                         "name": file.name,
