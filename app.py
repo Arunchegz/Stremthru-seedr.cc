@@ -14,7 +14,6 @@ app.add_middleware(
 )
 
 
-# Create Seedr client using device code from Railway variable
 def get_client():
     device_code = os.environ["SEEDR_DEVICE_CODE"]
     return Seedr.from_device_code(device_code)
@@ -33,7 +32,7 @@ def manifest():
     }
 
 
-# Debug endpoint – shows what Seedr sees
+# Debug endpoint: confirm file_id and folder_file_id
 @app.get("/debug/files")
 def debug_files():
     result = []
@@ -50,7 +49,7 @@ def debug_files():
     return result
 
 
-# Stremio stream endpoint
+# Stremio stream endpoint (Option 2: direct Seedr streaming)
 @app.get("/stream/{type}/{id}.json")
 def stream(type: str, id: str):
     streams = []
@@ -60,10 +59,9 @@ def stream(type: str, id: str):
             contents = client.list_contents()
 
             for file in contents.files:
-                # match by file_id and only if playable video
                 if str(file.file_id) == str(id) and file.play_video:
-                    # Direct Seedr streaming URL (most stable)
-                    url = f"https://www.seedr.cc/stream/{file.file_id}"
+                    # Correct and stable Seedr streaming URL
+                    url = f"https://www.seedr.cc/api/stream/{file.folder_file_id}"
 
                     streams.append({
                         "name": file.name,
@@ -75,7 +73,6 @@ def stream(type: str, id: str):
                     })
 
     except Exception as e:
-        # Never crash Stremio
         return {
             "streams": [],
             "error": str(e)
