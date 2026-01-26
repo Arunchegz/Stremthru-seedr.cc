@@ -20,6 +20,7 @@ app.add_middleware(
 # -----------------------
 
 def get_client():
+    # Make sure SEEDR_DEVICE_CODE is set in your environment
     return Seedr.from_device_code(os.environ["SEEDR_DEVICE_CODE"])
 
 
@@ -57,6 +58,27 @@ def walk_files(client, folder_id=None):
         yield from walk_files(client, folder.id)
 
 
+def extract_title_year(filename: str):
+    """
+    Try to extract title and year from a filename.
+    Example:
+      The.Matrix.1999.1080p.mkv -> ("The Matrix", "1999")
+    """
+    name = filename
+
+    year_match = re.search(r"(19|20)\d{2}", name)
+    year = year_match.group(0) if year_match else ""
+
+    # Remove extension and everything after it
+    title = re.sub(r"\.(mkv|mp4|avi|mov|webm|wmv).*", "", name, flags=re.I)
+    # Remove year
+    title = re.sub(r"(19|20)\d{2}", "", title)
+    # Replace dots and underscores
+    title = title.replace(".", " ").replace("_", " ").strip()
+
+    return title, year
+
+
 # -----------------------
 # Manifest
 # -----------------------
@@ -65,17 +87,23 @@ def walk_files(client, folder_id=None):
 def manifest():
     return {
         "id": "org.seedrcc.stremio",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "name": "Seedr.cc Personal Addon",
-        "description": "Stream your Seedr.cc files directly in Stremio",
-        "resources": ["stream"],
+        "description": "Stream and browse your Seedr.cc files in Stremio",
+        "resources": ["stream", "catalog", "meta"],
         "types": ["movie"],
-        "catalogs": []
+        "catalogs": [
+            {
+                "type": "movie",
+                "id": "seedr",
+                "name": "My Seedr Files"
+            }
+        ]
     }
 
 
 # -----------------------
-# Debug: See all files Seedr sees (including inside folders)
+# Debug: See all files Seedr sees
 # -----------------------
 
 @app.get("/debug/files")
@@ -94,7 +122,50 @@ def debug_files():
 
 
 # -----------------------
-# Stream endpoint (used by Stremio)
+# Catalog (Browse Seedr inside Stremio)
+# -----------------------
+
+@app.get("/catalog/movie/seedr.json")
+def catalog():
+    metas = []
+
+    with get_client() as client:
+        for f in walk_files(client):
+            if not f.play_video:
+                continue
+
+            title, year = extract_title_year(f.name)
+            meta_id = normalize(title + year)
+
+            metas.append({
+                "id": meta_id,
+                "type": "movie",
+                "name": title or f.name,
+                "year": year,
+                "poster": None,
+                "description": "From your Seedr.cc account"
+            })
+
+    return {"metas": metas}
+
+
+# -----------------------
+# Meta (Minimal, required by Stremio)
+# -----------------------
+
+@app.get("/meta/movie/{id}.json")
+def meta(id: str):
+    return {
+        "meta": {
+            "id": id,
+            "type": "movie",
+            "name": id,
+        }
+    }
+
+
+# -----------------------
+# Stream endpoint (Used by Stremio movie pages)
 # -----------------------
 
 @app.get("/stream/{type}/{id}.json")
@@ -105,7 +176,7 @@ def stream(type: str, id: str):
         return {"streams": []}
 
     try:
-        # 1. Get movie title + year from IMDb
+        # 1. Get movie title + year from IMDb via Cinemeta
         movie_title, movie_year = get_movie_title(id)
         norm_title = normalize(movie_title)
 
@@ -115,10 +186,10 @@ def stream(type: str, id: str):
                 if not file.play_video:
                     continue
 
-                fname = normalize(file.name)
+                fname_norm = normalize(file.name)
 
-                # 3. Match by title and year
-                if norm_title in fname and movie_year in file.name:
+                # 3. Match by title + year
+                if norm_title in fname_norm and movie_year in file.name:
                     # 4. Fetch real streaming URL from Seedr
                     result = client.fetch_file(file.folder_file_id)
 
