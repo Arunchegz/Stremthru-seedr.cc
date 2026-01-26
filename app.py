@@ -20,9 +20,10 @@ app.add_middleware(
 # -----------------------
 
 def get_client():
-    # Make sure SEEDR_DEVICE_CODE is set in your environment
-    return Seedr.from_device_code(os.environ["SEEDR_DEVICE_CODE"])
-
+    device_code = os.environ.get("SEEDR_DEVICE_CODE")
+    if not device_code:
+        raise Exception("SEEDR_DEVICE_CODE environment variable is missing")
+    return Seedr.from_device_code(device_code)
 
 # -----------------------
 # Helpers
@@ -37,7 +38,9 @@ def get_movie_title(imdb_id: str):
     Get movie title + year from Stremio Cinemeta using IMDb ID
     """
     url = f"https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json"
-    data = requests.get(url, timeout=10).json()
+    r = requests.get(url, timeout=10)
+    r.raise_for_status()
+    data = r.json()
     meta = data.get("meta", {})
     title = meta.get("name", "")
     year = str(meta.get("year", ""))
@@ -87,7 +90,7 @@ def extract_title_year(filename: str):
 def manifest():
     return {
         "id": "org.seedrcc.stremio",
-        "version": "1.1.0",
+        "version": "1.1.2",
         "name": "Seedr.cc Personal Addon",
         "description": "Stream and browse your Seedr.cc files in Stremio",
         "resources": ["stream", "catalog", "meta"],
@@ -99,6 +102,7 @@ def manifest():
                 "name": "My Seedr Files"
             }
         ]
+        # idPrefixes removed so custom catalog IDs work
     }
 
 
@@ -165,7 +169,10 @@ def meta(id: str):
 
 
 # -----------------------
-# Stream endpoint (Used by Stremio movie pages)
+# Stream endpoint
+# Works for:
+# 1. IMDb movie pages (ttxxxxxx)
+# 2. "My Seedr Files" catalog entries
 # -----------------------
 
 @app.get("/stream/{type}/{id}.json")
@@ -176,34 +183,51 @@ def stream(type: str, id: str):
         return {"streams": []}
 
     try:
-        # 1. Get movie title + year from IMDb via Cinemeta
-        movie_title, movie_year = get_movie_title(id)
-        norm_title = normalize(movie_title)
-
         with get_client() as client:
-            # 2. Walk ALL files including inside folders
-            for file in walk_files(client):
-                if not file.play_video:
-                    continue
 
-                fname_norm = normalize(file.name)
+            # CASE 1 → IMDb movie page
+            if id.startswith("tt"):
+                movie_title, movie_year = get_movie_title(id)
+                norm_title = normalize(movie_title)
 
-                # 3. Match by title + year
-                if norm_title in fname_norm and movie_year in file.name:
-                    # 4. Fetch real streaming URL from Seedr
-                    result = client.fetch_file(file.folder_file_id)
+                for file in walk_files(client):
+                    if not file.play_video:
+                        continue
 
-                    streams.append({
-                        "name": "Seedr.cc",
-                        "title": file.name,
-                        "url": result.url,
-                        "behaviorHints": {
-                            "notWebReady": False
-                        }
-                    })
+                    fname_norm = normalize(file.name)
+
+                    if norm_title in fname_norm and movie_year in file.name:
+                        result = client.fetch_file(file.folder_file_id)
+                        streams.append({
+                            "name": "Seedr.cc",
+                            "title": file.name,
+                            "url": result.url,
+                            "behaviorHints": {
+                                "notWebReady": False
+                            }
+                        })
+
+            # CASE 2 → Playing from "My Seedr Files"
+            else:
+                for file in walk_files(client):
+                    if not file.play_video:
+                        continue
+
+                    title, year = extract_title_year(file.name)
+                    file_id = normalize(title + year)
+
+                    if file_id == id:
+                        result = client.fetch_file(file.folder_file_id)
+                        streams.append({
+                            "name": "Seedr.cc",
+                            "title": file.name,
+                            "url": result.url,
+                            "behaviorHints": {
+                                "notWebReady": False
+                            }
+                        })
 
     except Exception as e:
-        # Never crash Stremio
         return {
             "streams": [],
             "error": str(e)
